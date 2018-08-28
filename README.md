@@ -1,1 +1,3 @@
-Zadanie 16.6 ToDo app - plugin
+Zadanie-16.7-ToDoApp-Complete
+
+https://michal-worwag.github.io/Zadanie-16.7-ToDoApp-Complete/
