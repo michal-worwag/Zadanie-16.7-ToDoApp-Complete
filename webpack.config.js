@@ -1,6 +1,7 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const OptimizeJsPlugin = require('optimize-js-plugin');
+const ReactHotLoader = require('react-hot-loader');
 
 const plugins = [new HtmlWebpackPlugin({
     template: 'src/index.html',
