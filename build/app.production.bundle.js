@@ -81,22 +81,506 @@
 /******/
 /******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = 7);
+/******/ 	return __webpack_require__(__webpack_require__.s = 9);
 /******/ })
 /************************************************************************/
 /******/ ([
 /* 0 */
-/***/ (function(module, exports, __webpack_require__) {
+/***/ ((function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
 if (true) {
-  module.exports = __webpack_require__(8);
+  module.exports = __webpack_require__(10);
 } else {}
 
-/***/ }),
+/***/ })),
 /* 1 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/*
+	MIT License http://www.opensource.org/licenses/mit-license.php
+	Author Tobias Koppers @sokra
+*/
+// css base code, injected by the css-loader
+module.exports = function (useSourceMap) {
+	var list = [];
+
+	// return the list of modules as css string
+	list.toString = function toString() {
+		return this.map((function (item) {
+			var content = cssWithMappingToString(item, useSourceMap);
+			if (item[2]) {
+				return "@media " + item[2] + "{" + content + "}";
+			} else {
+				return content;
+			}
+		})).join("");
+	};
+
+	// import a list of modules into the list
+	list.i = function (modules, mediaQuery) {
+		if (typeof modules === "string") modules = [[null, modules, ""]];
+		var alreadyImportedModules = {};
+		for (var i = 0; i < this.length; i++) {
+			var id = this[i][0];
+			if (typeof id === "number") alreadyImportedModules[id] = true;
+		}
+		for (i = 0; i < modules.length; i++) {
+			var item = modules[i];
+			// skip already imported module
+			// this implementation is not 100% perfect for weird media query combinations
+			//  when a module is imported multiple times with different media queries.
+			//  I hope this will never occur (Hey this way we have smaller bundles)
+			if (typeof item[0] !== "number" || !alreadyImportedModules[item[0]]) {
+				if (mediaQuery && !item[2]) {
+					item[2] = mediaQuery;
+				} else if (mediaQuery) {
+					item[2] = "(" + item[2] + ") and (" + mediaQuery + ")";
+				}
+				list.push(item);
+			}
+		}
+	};
+	return list;
+};
+
+function cssWithMappingToString(item, useSourceMap) {
+	var content = item[1] || '';
+	var cssMapping = item[3];
+	if (!cssMapping) {
+		return content;
+	}
+
+	if (useSourceMap && typeof btoa === 'function') {
+		var sourceMapping = toComment(cssMapping);
+		var sourceURLs = cssMapping.sources.map((function (source) {
+			return '/*# sourceURL=' + cssMapping.sourceRoot + source + ' */';
+		}));
+
+		return [content].concat(sourceURLs).concat([sourceMapping]).join('\n');
+	}
+
+	return [content].join('\n');
+}
+
+// Adapted from convert-source-map (MIT)
+function toComment(sourceMap) {
+	// eslint-disable-next-line no-undef
+	var base64 = btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap))));
+	var data = 'sourceMappingURL=data:application/json;charset=utf-8;base64,' + base64;
+
+	return '/*# ' + data + ' */';
+}
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports, __webpack_require__) {
+
+/*
+	MIT License http://www.opensource.org/licenses/mit-license.php
+	Author Tobias Koppers @sokra
+*/
+
+var stylesInDom = {};
+
+var	memoize = function (fn) {
+	var memo;
+
+	return function () {
+		if (typeof memo === "undefined") memo = fn.apply(this, arguments);
+		return memo;
+	};
+};
+
+var isOldIE = memoize((function () {
+	// Test for IE <= 9 as proposed by Browserhacks
+	// @see http://browserhacks.com/#hack-e71d8692f65334173fee715c222cb805
+	// Tests for existence of standard globals is to allow style-loader
+	// to operate correctly into non-standard environments
+	// @see https://github.com/webpack-contrib/style-loader/issues/177
+	return window && document && document.all && !window.atob;
+}));
+
+var getTarget = function (target, parent) {
+  if (parent){
+    return parent.querySelector(target);
+  }
+  return document.querySelector(target);
+};
+
+var getElement = (function (fn) {
+	var memo = {};
+
+	return function(target, parent) {
+                // If passing function in options, then use it for resolve "head" element.
+                // Useful for Shadow Root style i.e
+                // {
+                //   insertInto: function () { return document.querySelector("#foo").shadowRoot }
+                // }
+                if (typeof target === 'function') {
+                        return target();
+                }
+                if (typeof memo[target] === "undefined") {
+			var styleTarget = getTarget.call(this, target, parent);
+			// Special case to return head of iframe instead of iframe itself
+			if (window.HTMLIFrameElement && styleTarget instanceof window.HTMLIFrameElement) {
+				try {
+					// This will throw an exception if access to iframe is blocked
+					// due to cross-origin restrictions
+					styleTarget = styleTarget.contentDocument.head;
+				} catch(e) {
+					styleTarget = null;
+				}
+			}
+			memo[target] = styleTarget;
+		}
+		return memo[target]
+	};
+})();
+
+var singleton = null;
+var	singletonCounter = 0;
+var	stylesInsertedAtTop = [];
+
+var	fixUrls = __webpack_require__(26);
+
+module.exports = function(list, options) {
+	if (typeof DEBUG !== "undefined" && DEBUG) {
+		if (typeof document !== "object") throw new Error("The style-loader cannot be used in a non-browser environment");
+	}
+
+	options = options || {};
+
+	options.attrs = typeof options.attrs === "object" ? options.attrs : {};
+
+	// Force single-tag solution on IE6-9, which has a hard limit on the # of <style>
+	// tags it will allow on a page
+	if (!options.singleton && typeof options.singleton !== "boolean") options.singleton = isOldIE();
+
+	// By default, add <style> tags to the <head> element
+        if (!options.insertInto) options.insertInto = "head";
+
+	// By default, add <style> tags to the bottom of the target
+	if (!options.insertAt) options.insertAt = "bottom";
+
+	var styles = listToStyles(list, options);
+
+	addStylesToDom(styles, options);
+
+	return function update (newList) {
+		var mayRemove = [];
+
+		for (var i = 0; i < styles.length; i++) {
+			var item = styles[i];
+			var domStyle = stylesInDom[item.id];
+
+			domStyle.refs--;
+			mayRemove.push(domStyle);
+		}
+
+		if(newList) {
+			var newStyles = listToStyles(newList, options);
+			addStylesToDom(newStyles, options);
+		}
+
+		for (var i = 0; i < mayRemove.length; i++) {
+			var domStyle = mayRemove[i];
+
+			if(domStyle.refs === 0) {
+				for (var j = 0; j < domStyle.parts.length; j++) domStyle.parts[j]();
+
+				delete stylesInDom[domStyle.id];
+			}
+		}
+	};
+};
+
+function addStylesToDom (styles, options) {
+	for (var i = 0; i < styles.length; i++) {
+		var item = styles[i];
+		var domStyle = stylesInDom[item.id];
+
+		if(domStyle) {
+			domStyle.refs++;
+
+			for(var j = 0; j < domStyle.parts.length; j++) {
+				domStyle.parts[j](item.parts[j]);
+			}
+
+			for(; j < item.parts.length; j++) {
+				domStyle.parts.push(addStyle(item.parts[j], options));
+			}
+		} else {
+			var parts = [];
+
+			for(var j = 0; j < item.parts.length; j++) {
+				parts.push(addStyle(item.parts[j], options));
+			}
+
+			stylesInDom[item.id] = {id: item.id, refs: 1, parts: parts};
+		}
+	}
+}
+
+function listToStyles (list, options) {
+	var styles = [];
+	var newStyles = {};
+
+	for (var i = 0; i < list.length; i++) {
+		var item = list[i];
+		var id = options.base ? item[0] + options.base : item[0];
+		var css = item[1];
+		var media = item[2];
+		var sourceMap = item[3];
+		var part = {css: css, media: media, sourceMap: sourceMap};
+
+		if(!newStyles[id]) styles.push(newStyles[id] = {id: id, parts: [part]});
+		else newStyles[id].parts.push(part);
+	}
+
+	return styles;
+}
+
+function insertStyleElement (options, style) {
+	var target = getElement(options.insertInto)
+
+	if (!target) {
+		throw new Error("Couldn't find a style target. This probably means that the value for the 'insertInto' parameter is invalid.");
+	}
+
+	var lastStyleElementInsertedAtTop = stylesInsertedAtTop[stylesInsertedAtTop.length - 1];
+
+	if (options.insertAt === "top") {
+		if (!lastStyleElementInsertedAtTop) {
+			target.insertBefore(style, target.firstChild);
+		} else if (lastStyleElementInsertedAtTop.nextSibling) {
+			target.insertBefore(style, lastStyleElementInsertedAtTop.nextSibling);
+		} else {
+			target.appendChild(style);
+		}
+		stylesInsertedAtTop.push(style);
+	} else if (options.insertAt === "bottom") {
+		target.appendChild(style);
+	} else if (typeof options.insertAt === "object" && options.insertAt.before) {
+		var nextSibling = getElement(options.insertAt.before, target);
+		target.insertBefore(style, nextSibling);
+	} else {
+		throw new Error("[Style Loader]\n\n Invalid value for parameter 'insertAt' ('options.insertAt') found.\n Must be 'top', 'bottom', or Object.\n (https://github.com/webpack-contrib/style-loader#insertat)\n");
+	}
+}
+
+function removeStyleElement (style) {
+	if (style.parentNode === null) return false;
+	style.parentNode.removeChild(style);
+
+	var idx = stylesInsertedAtTop.indexOf(style);
+	if(idx >= 0) {
+		stylesInsertedAtTop.splice(idx, 1);
+	}
+}
+
+function createStyleElement (options) {
+	var style = document.createElement("style");
+
+	if(options.attrs.type === undefined) {
+		options.attrs.type = "text/css";
+	}
+
+	if(options.attrs.nonce === undefined) {
+		var nonce = getNonce();
+		if (nonce) {
+			options.attrs.nonce = nonce;
+		}
+	}
+
+	addAttrs(style, options.attrs);
+	insertStyleElement(options, style);
+
+	return style;
+}
+
+function createLinkElement (options) {
+	var link = document.createElement("link");
+
+	if(options.attrs.type === undefined) {
+		options.attrs.type = "text/css";
+	}
+	options.attrs.rel = "stylesheet";
+
+	addAttrs(link, options.attrs);
+	insertStyleElement(options, link);
+
+	return link;
+}
+
+function addAttrs (el, attrs) {
+	Object.keys(attrs).forEach((function (key) {
+		el.setAttribute(key, attrs[key]);
+	}));
+}
+
+function getNonce() {
+	if (false) {}
+
+	return __webpack_require__.nc;
+}
+
+function addStyle (obj, options) {
+	var style, update, remove, result;
+
+	// If a transform function was defined, run it on the css
+	if (options.transform && obj.css) {
+	    result = options.transform(obj.css);
+
+	    if (result) {
+	    	// If transform returns a value, use that instead of the original css.
+	    	// This allows running runtime transformations on the css.
+	    	obj.css = result;
+	    } else {
+	    	// If the transform function returns a falsy value, don't add this css.
+	    	// This allows conditional loading of css
+	    	return function() {
+	    		// noop
+	    	};
+	    }
+	}
+
+	if (options.singleton) {
+		var styleIndex = singletonCounter++;
+
+		style = singleton || (singleton = createStyleElement(options));
+
+		update = applyToSingletonTag.bind(null, style, styleIndex, false);
+		remove = applyToSingletonTag.bind(null, style, styleIndex, true);
+
+	} else if (
+		obj.sourceMap &&
+		typeof URL === "function" &&
+		typeof URL.createObjectURL === "function" &&
+		typeof URL.revokeObjectURL === "function" &&
+		typeof Blob === "function" &&
+		typeof btoa === "function"
+	) {
+		style = createLinkElement(options);
+		update = updateLink.bind(null, style, options);
+		remove = function () {
+			removeStyleElement(style);
+
+			if(style.href) URL.revokeObjectURL(style.href);
+		};
+	} else {
+		style = createStyleElement(options);
+		update = applyToTag.bind(null, style);
+		remove = function () {
+			removeStyleElement(style);
+		};
+	}
+
+	update(obj);
+
+	return function updateStyle (newObj) {
+		if (newObj) {
+			if (
+				newObj.css === obj.css &&
+				newObj.media === obj.media &&
+				newObj.sourceMap === obj.sourceMap
+			) {
+				return;
+			}
+
+			update(obj = newObj);
+		} else {
+			remove();
+		}
+	};
+}
+
+var replaceText = (function () {
+	var textStore = [];
+
+	return function (index, replacement) {
+		textStore[index] = replacement;
+
+		return textStore.filter(Boolean).join('\n');
+	};
+})();
+
+function applyToSingletonTag (style, index, remove, obj) {
+	var css = remove ? "" : obj.css;
+
+	if (style.styleSheet) {
+		style.styleSheet.cssText = replaceText(index, css);
+	} else {
+		var cssNode = document.createTextNode(css);
+		var childNodes = style.childNodes;
+
+		if (childNodes[index]) style.removeChild(childNodes[index]);
+
+		if (childNodes.length) {
+			style.insertBefore(cssNode, childNodes[index]);
+		} else {
+			style.appendChild(cssNode);
+		}
+	}
+}
+
+function applyToTag (style, obj) {
+	var css = obj.css;
+	var media = obj.media;
+
+	if(media) {
+		style.setAttribute("media", media)
+	}
+
+	if(style.styleSheet) {
+		style.styleSheet.cssText = css;
+	} else {
+		while(style.firstChild) {
+			style.removeChild(style.firstChild);
+		}
+
+		style.appendChild(document.createTextNode(css));
+	}
+}
+
+function updateLink (link, options, obj) {
+	var css = obj.css;
+	var sourceMap = obj.sourceMap;
+
+	/*
+		If convertToAbsoluteUrls isn't defined, but sourcemaps are enabled
+		and there is no publicPath defined then lets turn convertToAbsoluteUrls
+		on by default.  Otherwise default to the convertToAbsoluteUrls option
+		directly
+	*/
+	var autoFixUrls = options.convertToAbsoluteUrls === undefined && sourceMap;
+
+	if (options.convertToAbsoluteUrls || autoFixUrls) {
+		css = fixUrls(css);
+	}
+
+	if (sourceMap) {
+		// http://stackoverflow.com/a/26603875
+		css += "\n/*# sourceMappingURL=data:application/json;base64," + btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap)))) + " */";
+	}
+
+	var blob = new Blob([css], { type: "text/css" });
+
+	var oldSrc = link.href;
+
+	link.href = URL.createObjectURL(blob);
+
+	if(oldSrc) URL.revokeObjectURL(oldSrc);
+}
+
+
+/***/ }),
+/* 3 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -141,18 +625,18 @@ function shouldUseNative() {
 		for (var i = 0; i < 10; i++) {
 			test2['_' + String.fromCharCode(i)] = i;
 		}
-		var order2 = Object.getOwnPropertyNames(test2).map(function (n) {
+		var order2 = Object.getOwnPropertyNames(test2).map((function (n) {
 			return test2[n];
-		});
+		}));
 		if (order2.join('') !== '0123456789') {
 			return false;
 		}
 
 		// https://bugs.chromium.org/p/v8/issues/detail?id=3056
 		var test3 = {};
-		'abcdefghijklmnopqrst'.split('').forEach(function (letter) {
+		'abcdefghijklmnopqrst'.split('').forEach((function (letter) {
 			test3[letter] = letter;
-		});
+		}));
 		if (Object.keys(Object.assign({}, test3)).join('') !== 'abcdefghijklmnopqrst') {
 			return false;
 		}
@@ -192,7 +676,7 @@ module.exports = shouldUseNative() ? Object.assign : function (target, source) {
 };
 
 /***/ }),
-/* 2 */
+/* 4 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -231,9 +715,9 @@ function invariant(condition, format, a, b, c, d, e, f) {
     } else {
       var args = [a, b, c, d, e, f];
       var argIndex = 0;
-      error = new Error(format.replace(/%s/g, function () {
+      error = new Error(format.replace(/%s/g, (function () {
         return args[argIndex++];
-      }));
+      })));
       error.name = 'Invariant Violation';
     }
 
@@ -245,7 +729,7 @@ function invariant(condition, format, a, b, c, d, e, f) {
 module.exports = invariant;
 
 /***/ }),
-/* 3 */
+/* 5 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -266,7 +750,7 @@ if (false) {}
 module.exports = emptyObject;
 
 /***/ }),
-/* 4 */
+/* 6 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -308,7 +792,7 @@ emptyFunction.thatReturnsArgument = function (arg) {
 module.exports = emptyFunction;
 
 /***/ }),
-/* 5 */
+/* 7 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -349,7 +833,7 @@ if (getRandomValues) {
 }
 
 /***/ }),
-/* 6 */
+/* 8 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -374,7 +858,7 @@ function bytesToUuid(buf, offset) {
 module.exports = bytesToUuid;
 
 /***/ }),
-/* 7 */
+/* 9 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -384,11 +868,11 @@ var _react = __webpack_require__(0);
 
 var _react2 = _interopRequireDefault(_react);
 
-var _reactDom = __webpack_require__(9);
+var _reactDom = __webpack_require__(11);
 
 var _reactDom2 = _interopRequireDefault(_reactDom);
 
-var _App = __webpack_require__(17);
+var _App = __webpack_require__(19);
 
 var _App2 = _interopRequireDefault(_App);
 
@@ -397,7 +881,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 _reactDom2.default.render(_react2.default.createElement(_App2.default, null), document.getElementById('app'));
 
 /***/ }),
-/* 8 */
+/* 10 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -414,10 +898,10 @@ _reactDom2.default.render(_react2.default.createElement(_App2.default, null), do
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
 
-var k = __webpack_require__(1),
-    n = __webpack_require__(2),
-    p = __webpack_require__(3),
-    q = __webpack_require__(4),
+var k = __webpack_require__(3),
+    n = __webpack_require__(4),
+    p = __webpack_require__(5),
+    q = __webpack_require__(6),
     r = "function" === typeof Symbol && Symbol.for,
     t = r ? Symbol.for("react.element") : 60103,
     u = r ? Symbol.for("react.portal") : 60106,
@@ -463,9 +947,9 @@ function M(a, b, e) {
 function N(a) {
   return "object" === (typeof a === "undefined" ? "undefined" : _typeof(a)) && null !== a && a.$$typeof === t;
 }function escape(a) {
-  var b = { "=": "=0", ":": "=2" };return "$" + ("" + a).replace(/[=:]/g, function (a) {
+  var b = { "=": "=0", ":": "=2" };return "$" + ("" + a).replace(/[=:]/g, (function (a) {
     return b[a];
-  });
+  }));
 }var O = /\/+/g,
     P = [];function Q(a, b, e, c) {
   if (P.length) {
@@ -533,7 +1017,7 @@ var X = { Children: { map: function map(a, b, e) {
     Z = Y && X || Y;module.exports = Z.default ? Z.default : Z;
 
 /***/ }),
-/* 9 */
+/* 11 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -559,11 +1043,11 @@ if (true) {
   // DCE check should happen before ReactDOM bundle executes so that
   // DevTools can report bad minification during injection.
   checkDCE();
-  module.exports = __webpack_require__(10);
+  module.exports = __webpack_require__(12);
 } else {}
 
 /***/ }),
-/* 10 */
+/* 12 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -583,15 +1067,15 @@ if (true) {
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
 
-var aa = __webpack_require__(2),
+var aa = __webpack_require__(4),
     ba = __webpack_require__(0),
-    m = __webpack_require__(11),
-    p = __webpack_require__(1),
-    v = __webpack_require__(4),
-    da = __webpack_require__(12),
-    ea = __webpack_require__(13),
-    fa = __webpack_require__(14),
-    ha = __webpack_require__(3);
+    m = __webpack_require__(13),
+    p = __webpack_require__(3),
+    v = __webpack_require__(6),
+    da = __webpack_require__(14),
+    ea = __webpack_require__(15),
+    fa = __webpack_require__(16),
+    ha = __webpack_require__(5);
 function A(a) {
   for (var b = arguments.length - 1, c = "https://reactjs.org/docs/error-decoder.html?invariant=" + a, d = 0; d < b; d++) {
     c += "&args[]=" + encodeURIComponent(arguments[d + 1]);
@@ -992,36 +1476,36 @@ function Dc(a, b, c, d) {
 }function I(a, b, c, d, e) {
   this.acceptsBooleans = 2 === b || 3 === b || 4 === b;this.attributeName = d;this.attributeNamespace = e;this.mustUseProperty = c;this.propertyName = a;this.type = b;
 }var J = {};
-"children dangerouslySetInnerHTML defaultValue defaultChecked innerHTML suppressContentEditableWarning suppressHydrationWarning style".split(" ").forEach(function (a) {
+"children dangerouslySetInnerHTML defaultValue defaultChecked innerHTML suppressContentEditableWarning suppressHydrationWarning style".split(" ").forEach((function (a) {
   J[a] = new I(a, 0, !1, a, null);
-});[["acceptCharset", "accept-charset"], ["className", "class"], ["htmlFor", "for"], ["httpEquiv", "http-equiv"]].forEach(function (a) {
+}));[["acceptCharset", "accept-charset"], ["className", "class"], ["htmlFor", "for"], ["httpEquiv", "http-equiv"]].forEach((function (a) {
   var b = a[0];J[b] = new I(b, 1, !1, a[1], null);
-});["contentEditable", "draggable", "spellCheck", "value"].forEach(function (a) {
+}));["contentEditable", "draggable", "spellCheck", "value"].forEach((function (a) {
   J[a] = new I(a, 2, !1, a.toLowerCase(), null);
-});
-["autoReverse", "externalResourcesRequired", "preserveAlpha"].forEach(function (a) {
+}));
+["autoReverse", "externalResourcesRequired", "preserveAlpha"].forEach((function (a) {
   J[a] = new I(a, 2, !1, a, null);
-});"allowFullScreen async autoFocus autoPlay controls default defer disabled formNoValidate hidden loop noModule noValidate open playsInline readOnly required reversed scoped seamless itemScope".split(" ").forEach(function (a) {
+}));"allowFullScreen async autoFocus autoPlay controls default defer disabled formNoValidate hidden loop noModule noValidate open playsInline readOnly required reversed scoped seamless itemScope".split(" ").forEach((function (a) {
   J[a] = new I(a, 3, !1, a.toLowerCase(), null);
-});["checked", "multiple", "muted", "selected"].forEach(function (a) {
+}));["checked", "multiple", "muted", "selected"].forEach((function (a) {
   J[a] = new I(a, 3, !0, a.toLowerCase(), null);
-});
-["capture", "download"].forEach(function (a) {
+}));
+["capture", "download"].forEach((function (a) {
   J[a] = new I(a, 4, !1, a.toLowerCase(), null);
-});["cols", "rows", "size", "span"].forEach(function (a) {
+}));["cols", "rows", "size", "span"].forEach((function (a) {
   J[a] = new I(a, 6, !1, a.toLowerCase(), null);
-});["rowSpan", "start"].forEach(function (a) {
+}));["rowSpan", "start"].forEach((function (a) {
   J[a] = new I(a, 5, !1, a.toLowerCase(), null);
-});var Ec = /[\-:]([a-z])/g;function Fc(a) {
+}));var Ec = /[\-:]([a-z])/g;function Fc(a) {
   return a[1].toUpperCase();
 }
-"accent-height alignment-baseline arabic-form baseline-shift cap-height clip-path clip-rule color-interpolation color-interpolation-filters color-profile color-rendering dominant-baseline enable-background fill-opacity fill-rule flood-color flood-opacity font-family font-size font-size-adjust font-stretch font-style font-variant font-weight glyph-name glyph-orientation-horizontal glyph-orientation-vertical horiz-adv-x horiz-origin-x image-rendering letter-spacing lighting-color marker-end marker-mid marker-start overline-position overline-thickness paint-order panose-1 pointer-events rendering-intent shape-rendering stop-color stop-opacity strikethrough-position strikethrough-thickness stroke-dasharray stroke-dashoffset stroke-linecap stroke-linejoin stroke-miterlimit stroke-opacity stroke-width text-anchor text-decoration text-rendering underline-position underline-thickness unicode-bidi unicode-range units-per-em v-alphabetic v-hanging v-ideographic v-mathematical vector-effect vert-adv-y vert-origin-x vert-origin-y word-spacing writing-mode xmlns:xlink x-height".split(" ").forEach(function (a) {
+"accent-height alignment-baseline arabic-form baseline-shift cap-height clip-path clip-rule color-interpolation color-interpolation-filters color-profile color-rendering dominant-baseline enable-background fill-opacity fill-rule flood-color flood-opacity font-family font-size font-size-adjust font-stretch font-style font-variant font-weight glyph-name glyph-orientation-horizontal glyph-orientation-vertical horiz-adv-x horiz-origin-x image-rendering letter-spacing lighting-color marker-end marker-mid marker-start overline-position overline-thickness paint-order panose-1 pointer-events rendering-intent shape-rendering stop-color stop-opacity strikethrough-position strikethrough-thickness stroke-dasharray stroke-dashoffset stroke-linecap stroke-linejoin stroke-miterlimit stroke-opacity stroke-width text-anchor text-decoration text-rendering underline-position underline-thickness unicode-bidi unicode-range units-per-em v-alphabetic v-hanging v-ideographic v-mathematical vector-effect vert-adv-y vert-origin-x vert-origin-y word-spacing writing-mode xmlns:xlink x-height".split(" ").forEach((function (a) {
   var b = a.replace(Ec, Fc);J[b] = new I(b, 1, !1, a, null);
-});"xlink:actuate xlink:arcrole xlink:href xlink:role xlink:show xlink:title xlink:type".split(" ").forEach(function (a) {
+}));"xlink:actuate xlink:arcrole xlink:href xlink:role xlink:show xlink:title xlink:type".split(" ").forEach((function (a) {
   var b = a.replace(Ec, Fc);J[b] = new I(b, 1, !1, a, "http://www.w3.org/1999/xlink");
-});["xml:base", "xml:lang", "xml:space"].forEach(function (a) {
+}));["xml:base", "xml:lang", "xml:space"].forEach((function (a) {
   var b = a.replace(Ec, Fc);J[b] = new I(b, 1, !1, a, "http://www.w3.org/XML/1998/namespace");
-});J.tabIndex = new I("tabIndex", 1, !1, "tabindex", null);
+}));J.tabIndex = new I("tabIndex", 1, !1, "tabindex", null);
 function Gc(a, b, c, d) {
   var e = J.hasOwnProperty(b) ? J[b] : null;var f = null !== e ? 0 === e.type : d ? !1 : !(2 < b.length) || "o" !== b[0] && "O" !== b[0] || "n" !== b[1] && "N" !== b[1] ? !1 : !0;f || (Dc(b, c, e, d) && (c = null), d || null === e ? Bc(b) && (null === c ? a.removeAttribute(b) : a.setAttribute(b, "" + c)) : e.mustUseProperty ? a[e.propertyName] = null === c ? 3 === e.type ? !1 : "" : c : (b = e.attributeName, d = e.attributeNamespace, null === c ? a.removeAttribute(b) : (e = e.type, c = 3 === e || 4 === e && !0 === c ? "" : "" + c, d ? a.setAttributeNS(d, b, c) : a.setAttribute(b, c))));
 }
@@ -1186,11 +1670,11 @@ var td = { Esc: "Escape", Spacebar: " ", Left: "ArrowLeft", Up: "ArrowUp", Right
     Cd = {};function Dd(a, b) {
   var c = a[0];a = a[1];var d = "on" + (a[0].toUpperCase() + a.slice(1));b = { phasedRegistrationNames: { bubbled: d, captured: d + "Capture" }, dependencies: [c], isInteractive: b };Bd[a] = b;Cd[c] = b;
 }
-[["blur", "blur"], ["cancel", "cancel"], ["click", "click"], ["close", "close"], ["contextmenu", "contextMenu"], ["copy", "copy"], ["cut", "cut"], ["dblclick", "doubleClick"], ["dragend", "dragEnd"], ["dragstart", "dragStart"], ["drop", "drop"], ["focus", "focus"], ["input", "input"], ["invalid", "invalid"], ["keydown", "keyDown"], ["keypress", "keyPress"], ["keyup", "keyUp"], ["mousedown", "mouseDown"], ["mouseup", "mouseUp"], ["paste", "paste"], ["pause", "pause"], ["play", "play"], ["pointercancel", "pointerCancel"], ["pointerdown", "pointerDown"], ["pointerup", "pointerUp"], ["ratechange", "rateChange"], ["reset", "reset"], ["seeked", "seeked"], ["submit", "submit"], ["touchcancel", "touchCancel"], ["touchend", "touchEnd"], ["touchstart", "touchStart"], ["volumechange", "volumeChange"]].forEach(function (a) {
+[["blur", "blur"], ["cancel", "cancel"], ["click", "click"], ["close", "close"], ["contextmenu", "contextMenu"], ["copy", "copy"], ["cut", "cut"], ["dblclick", "doubleClick"], ["dragend", "dragEnd"], ["dragstart", "dragStart"], ["drop", "drop"], ["focus", "focus"], ["input", "input"], ["invalid", "invalid"], ["keydown", "keyDown"], ["keypress", "keyPress"], ["keyup", "keyUp"], ["mousedown", "mouseDown"], ["mouseup", "mouseUp"], ["paste", "paste"], ["pause", "pause"], ["play", "play"], ["pointercancel", "pointerCancel"], ["pointerdown", "pointerDown"], ["pointerup", "pointerUp"], ["ratechange", "rateChange"], ["reset", "reset"], ["seeked", "seeked"], ["submit", "submit"], ["touchcancel", "touchCancel"], ["touchend", "touchEnd"], ["touchstart", "touchStart"], ["volumechange", "volumeChange"]].forEach((function (a) {
   Dd(a, !0);
-});Ad.forEach(function (a) {
+}));Ad.forEach((function (a) {
   Dd(a, !1);
-});
+}));
 var Ed = { eventTypes: Bd, isInteractiveTopLevelEventType: function isInteractiveTopLevelEventType(a) {
     a = Cd[a];return void 0 !== a && !0 === a.isInteractive;
   }, extractEvents: function extractEvents(a, b, c, d) {
@@ -1333,7 +1817,7 @@ if (m.canUseDOM) {
       ke(a), d || (oe = !0, window.postMessage(ue, "*"));
     }
   },
-      ue = "__reactIdleCallback$" + Math.random().toString(36).slice(2);window.addEventListener("message", function (a) {
+      ue = "__reactIdleCallback$" + Math.random().toString(36).slice(2);window.addEventListener("message", (function (a) {
     if (a.source === window && a.data === ue && (oe = !1, null !== L)) {
       if (null !== L) {
         var b = he();if (!(-1 === ne || ne > b)) {
@@ -1347,7 +1831,7 @@ if (m.canUseDOM) {
         a = L, te.didTimeout = !1, ve(a, te), a = he();
       }null === L || pe || (pe = !0, le(we));
     }
-  }, !1);var we = function we(a) {
+  }), !1);var we = function we(a) {
     pe = !1;var b = a - qe + se;b < se && re < se ? (8 > b && (b = 8), se = b < re ? re : b) : re = b;qe = a + se;oe || (oe = !0, window.postMessage(ue, "*"));
   };je = function je(a, b) {
     var c = -1;null != b && "number" === typeof b.timeout && (c = he() + b.timeout);if (-1 === ne || -1 !== c && c < ne) ne = c;a = { scheduledCallback: a, timeoutTime: c, prev: null, next: null };null === L ? L = a : (b = a.prev = me, null !== b && (b.next = a));me = a;pe || (pe = !0, le(we));return a;
@@ -1360,19 +1844,19 @@ if (m.canUseDOM) {
 } else {
   var xe = new Map();je = function je(a) {
     var b = { scheduledCallback: a, timeoutTime: 0, next: null, prev: null },
-        c = fe(function () {
+        c = fe((function () {
       a({ timeRemaining: function timeRemaining() {
           return Infinity;
         },
         didTimeout: !1 });
-    });xe.set(a, c);return b;
+    }));xe.set(a, c);return b;
   };ke = function ke(a) {
     var b = xe.get(a.scheduledCallback);xe.delete(a);ge(b);
   };
 }function ye(a) {
-  var b = "";ba.Children.forEach(a, function (a) {
+  var b = "";ba.Children.forEach(a, (function (a) {
     null == a || "string" !== typeof a && "number" !== typeof a || (b += a);
-  });return b;
+  }));return b;
 }function ze(a, b) {
   a = p({ children: void 0 }, b);if (b = ye(b.children)) a.children = b;return a;
 }
@@ -1412,13 +1896,13 @@ function He(a) {
   return null == a || "http://www.w3.org/1999/xhtml" === a ? He(b) : "http://www.w3.org/2000/svg" === a && "foreignObject" === b ? "http://www.w3.org/1999/xhtml" : a;
 }
 var Je = void 0,
-    Ke = function (a) {
+    Ke = (function (a) {
   return "undefined" !== typeof MSApp && MSApp.execUnsafeLocalFunction ? function (b, c, d, e) {
-    MSApp.execUnsafeLocalFunction(function () {
+    MSApp.execUnsafeLocalFunction((function () {
       return a(b, c, d, e);
-    });
+    }));
   } : a;
-}(function (a, b) {
+})((function (a, b) {
   if (a.namespaceURI !== Ge.svg || "innerHTML" in a) a.innerHTML = b;else {
     Je = Je || document.createElement("div");Je.innerHTML = "<svg>" + b + "</svg>";for (b = Je.firstChild; a.firstChild;) {
       a.removeChild(a.firstChild);
@@ -1426,7 +1910,7 @@ var Je = void 0,
       a.appendChild(b.firstChild);
     }
   }
-});
+}));
 function Le(a, b) {
   if (b) {
     var c = a.firstChild;if (c && c === a.lastChild && 3 === c.nodeType) {
@@ -1436,11 +1920,11 @@ function Le(a, b) {
 }
 var Me = { animationIterationCount: !0, borderImageOutset: !0, borderImageSlice: !0, borderImageWidth: !0, boxFlex: !0, boxFlexGroup: !0, boxOrdinalGroup: !0, columnCount: !0, columns: !0, flex: !0, flexGrow: !0, flexPositive: !0, flexShrink: !0, flexNegative: !0, flexOrder: !0, gridRow: !0, gridRowEnd: !0, gridRowSpan: !0, gridRowStart: !0, gridColumn: !0, gridColumnEnd: !0, gridColumnSpan: !0, gridColumnStart: !0, fontWeight: !0, lineClamp: !0, lineHeight: !0, opacity: !0, order: !0, orphans: !0, tabSize: !0, widows: !0, zIndex: !0, zoom: !0, fillOpacity: !0, floodOpacity: !0,
   stopOpacity: !0, strokeDasharray: !0, strokeDashoffset: !0, strokeMiterlimit: !0, strokeOpacity: !0, strokeWidth: !0 },
-    Ne = ["Webkit", "ms", "Moz", "O"];Object.keys(Me).forEach(function (a) {
-  Ne.forEach(function (b) {
+    Ne = ["Webkit", "ms", "Moz", "O"];Object.keys(Me).forEach((function (a) {
+  Ne.forEach((function (b) {
     b = b + a.charAt(0).toUpperCase() + a.substring(1);Me[b] = Me[a];
-  });
-});
+  }));
+}));
 function Oe(a, b) {
   a = a.style;for (var c in b) {
     if (b.hasOwnProperty(c)) {
@@ -1668,11 +2152,11 @@ function Ff(a, b, c) {
 }
 function Jf(a) {
   if ("undefined" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__) return !1;var b = __REACT_DEVTOOLS_GLOBAL_HOOK__;if (b.isDisabled || !b.supportsFiber) return !0;try {
-    var c = b.inject(a);Gf = If(function (a) {
+    var c = b.inject(a);Gf = If((function (a) {
       return b.onCommitFiberRoot(c, a);
-    });Hf = If(function (a) {
+    }));Hf = If((function (a) {
       return b.onCommitFiberUnmount(c, a);
-    });
+    }));
   } catch (d) {}return !0;
 }function Kf(a) {
   "function" === typeof Gf && Gf(a);
@@ -1844,9 +2328,9 @@ function xg(a) {
       }return u;
     }for (t = d(e, t); q < h.length; q++) {
       if (n = nc(t, e, q, h[q], k)) a && null !== n.alternate && t.delete(null === n.key ? q : n.key), g = f(n, g, q), null === x ? u = n : x.sibling = n, x = n;
-    }a && t.forEach(function (a) {
+    }a && t.forEach((function (a) {
       return b(e, a);
-    });return u;
+    }));return u;
   }function E(e, g, h, k) {
     var u = tc(h);"function" !== typeof u ? A("150") : void 0;h = u.call(h);null == h ? A("151") : void 0;for (var t = u = null, n = g, x = g = 0, y = null, l = h.next(); null !== n && !l.done; x++, l = h.next()) {
       n.index > x ? (y = n, n = null) : y = n.sibling;var r = P(e, n, l.value, k);if (null === r) {
@@ -1858,9 +2342,9 @@ function xg(a) {
       }return u;
     }for (n = d(e, n); !l.done; x++, l = h.next()) {
       l = nc(n, e, x, l.value, k), null !== l && (a && null !== l.alternate && n.delete(null === l.key ? x : l.key), g = f(l, g, x), null === t ? u = l : t.sibling = l, t = l);
-    }a && n.forEach(function (a) {
+    }a && n.forEach((function (a) {
       return b(e, a);
-    });return u;
+    }));return u;
   }return function (a, d, f, h) {
     var k = "object" === (typeof f === "undefined" ? "undefined" : _typeof(f)) && null !== f && f.type === ic && null === f.key;k && (f = f.props.children);var n = "object" === (typeof f === "undefined" ? "undefined" : _typeof(f)) && null !== f;if (n) switch (f.$$typeof) {case gc:
         a: {
@@ -2250,9 +2734,9 @@ function zh(a, b, c) {
       }
     }break;
   } while (1);qh = !1;if (d) return null;if (null === S) {
-    if (vh) return a.pendingCommitExpirationTime = b, a.current.alternate;th ? A("262") : void 0;0 <= sh && setTimeout(function () {
+    if (vh) return a.pendingCommitExpirationTime = b, a.current.alternate;th ? A("262") : void 0;0 <= sh && setTimeout((function () {
       var b = a.current.expirationTime;0 !== b && (0 === a.remainingExpirationTime || a.remainingExpirationTime < b) && Bh(a, b);
-    }, sh);Ch(a.current.expirationTime);
+    }), sh);Ch(a.current.expirationTime);
   }return null;
 }
 function $g(a, b) {
@@ -2625,9 +3109,9 @@ function ui(a, b, c, d, e) {
       var h = e;e = function e() {
         var a = ki(f._internalRoot);h.call(a);
       };
-    }di(function () {
+    }di((function () {
       null != a ? f.legacy_renderSubtreeIntoContainer(a, b, e) : f.render(b, e);
-    });
+    }));
   }return ki(f._internalRoot);
 }
 function vi(a, b) {
@@ -2642,11 +3126,11 @@ var wi = { createPortal: vi, findDOMNode: function findDOMNode(a) {
   }, unstable_renderSubtreeIntoContainer: function unstable_renderSubtreeIntoContainer(a, b, c, d) {
     null == a || void 0 === a._reactInternalFiber ? A("38") : void 0;return ui(a, b, c, !1, d);
   }, unmountComponentAtNode: function unmountComponentAtNode(a) {
-    si(a) ? void 0 : A("40");return a._reactRootContainer ? (di(function () {
-      ui(null, null, a, !1, function () {
+    si(a) ? void 0 : A("40");return a._reactRootContainer ? (di((function () {
+      ui(null, null, a, !1, (function () {
         a._reactRootContainer = null;
-      });
-    }), !0) : !1;
+      }));
+    })), !0) : !1;
   }, unstable_createPortal: function unstable_createPortal() {
     return vi.apply(void 0, arguments);
   }, unstable_batchedUpdates: ci, unstable_deferredUpdates: Ih, unstable_interactiveUpdates: fi, flushSync: ei, unstable_flushControlled: gi, __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: { EventPluginHub: Ka, EventPluginRegistry: va, EventPropagators: $a, ReactControlledComponent: Rb, ReactDOMComponentTree: Qa, ReactDOMEventListener: Od }, unstable_createRoot: function unstable_createRoot(a, b) {
@@ -2656,7 +3140,7 @@ var Bi = { default: wi },
     Ci = Bi && wi || Bi;module.exports = Ci.default ? Ci.default : Ci;
 
 /***/ }),
-/* 11 */
+/* 13 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2695,7 +3179,7 @@ var ExecutionEnvironment = {
 module.exports = ExecutionEnvironment;
 
 /***/ }),
-/* 12 */
+/* 14 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2738,7 +3222,7 @@ function getActiveElement(doc) /*?DOMElement*/{
 module.exports = getActiveElement;
 
 /***/ }),
-/* 13 */
+/* 15 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2811,7 +3295,7 @@ function shallowEqual(objA, objB) {
 module.exports = shallowEqual;
 
 /***/ }),
-/* 14 */
+/* 16 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2826,7 +3310,7 @@ module.exports = shallowEqual;
  * 
  */
 
-var isTextNode = __webpack_require__(15);
+var isTextNode = __webpack_require__(17);
 
 /*eslint-disable no-bitwise */
 
@@ -2854,7 +3338,7 @@ function containsNode(outerNode, innerNode) {
 module.exports = containsNode;
 
 /***/ }),
-/* 15 */
+/* 17 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2869,7 +3353,7 @@ module.exports = containsNode;
  * @typechecks
  */
 
-var isNode = __webpack_require__(16);
+var isNode = __webpack_require__(18);
 
 /**
  * @param {*} object The object to check.
@@ -2882,7 +3366,7 @@ function isTextNode(object) {
 module.exports = isTextNode;
 
 /***/ }),
-/* 16 */
+/* 18 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -2913,33 +3397,43 @@ function isNode(object) {
 module.exports = isNode;
 
 /***/ }),
-/* 17 */
+/* 19 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
-
+/* WEBPACK VAR INJECTION */(function(module) {
 
 Object.defineProperty(exports, "__esModule", {
     value: true
 });
 
-var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
 var _react = __webpack_require__(0);
 
 var _react2 = _interopRequireDefault(_react);
 
-var _uuid = __webpack_require__(18);
+var _uuid = __webpack_require__(21);
 
 var _uuid2 = _interopRequireDefault(_uuid);
 
-var _App = __webpack_require__(21);
+var _App = __webpack_require__(24);
 
 var _App2 = _interopRequireDefault(_App);
 
-var _Title = __webpack_require__(26);
+var _Title = __webpack_require__(27);
 
 var _Title2 = _interopRequireDefault(_Title);
+
+var _TodoList = __webpack_require__(30);
+
+var _TodoList2 = _interopRequireDefault(_TodoList);
+
+var _TodoForm = __webpack_require__(36);
+
+var _TodoForm2 = _interopRequireDefault(_TodoForm);
+
+var _reactHotLoader = __webpack_require__(39);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -2951,7 +3445,21 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var App = function (_React$Component) {
+var dataElements = [{
+    id: 1,
+    text: 'clean room'
+}, {
+    id: 2,
+    text: 'wash the dishes'
+}, {
+    id: 3,
+    text: 'feed my dog'
+}, {
+    id: 4,
+    text: 'feed my cat'
+}];
+
+var App = (function (_React$Component) {
     _inherits(App, _React$Component);
 
     function App(props) {
@@ -2960,7 +3468,7 @@ var App = function (_React$Component) {
         var _this = _possibleConstructorReturn(this, (App.__proto__ || Object.getPrototypeOf(App)).call(this, props));
 
         _this.state = {
-            data: []
+            data: dataElements
         };
         return _this;
     }
@@ -2978,9 +3486,9 @@ var App = function (_React$Component) {
     }, {
         key: 'removeTodo',
         value: function removeTodo(id) {
-            var remainder = this.state.data.filter(function (todo) {
+            var remainder = this.state.data.filter((function (todo) {
                 return todo.id !== id;
-            });
+            }));
             this.setState({ data: remainder });
         }
     }, {
@@ -2989,25 +3497,58 @@ var App = function (_React$Component) {
             return _react2.default.createElement(
                 'div',
                 { className: _App2.default.TodoApp },
-                _react2.default.createElement(_Title2.default, { title: 'ToDo App', number: this.state.data.length })
+                _react2.default.createElement(_Title2.default, { title: 'ToDo App', number: this.state.data.length }),
+                _react2.default.createElement(_TodoForm2.default, { addTodo: this.addTodo.bind(this), data: this.state.data }),
+                _react2.default.createElement(_TodoList2.default, { data: this.state.data, remove: this.removeTodo.bind(this) })
             );
         }
     }]);
 
     return App;
-}(_react2.default.Component);
+})(_react2.default.Component);
 
-exports.default = App;
+exports.default = (0, _reactHotLoader.hot)(module)(App);
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(20)(module)))
 
 /***/ }),
-/* 18 */
+/* 20 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var v1 = __webpack_require__(19);
-var v4 = __webpack_require__(20);
+module.exports = function (module) {
+	if (!module.webpackPolyfill) {
+		module.deprecate = function () {};
+		module.paths = [];
+		// module.parent = undefined by default
+		if (!module.children) module.children = [];
+		Object.defineProperty(module, "loaded", {
+			enumerable: true,
+			get: function get() {
+				return module.l;
+			}
+		});
+		Object.defineProperty(module, "id", {
+			enumerable: true,
+			get: function get() {
+				return module.i;
+			}
+		});
+		module.webpackPolyfill = 1;
+	}
+	return module;
+};
+
+/***/ }),
+/* 21 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var v1 = __webpack_require__(22);
+var v4 = __webpack_require__(23);
 
 var uuid = v4;
 uuid.v1 = v1;
@@ -3016,14 +3557,14 @@ uuid.v4 = v4;
 module.exports = uuid;
 
 /***/ }),
-/* 19 */
+/* 22 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var rng = __webpack_require__(5);
-var bytesToUuid = __webpack_require__(6);
+var rng = __webpack_require__(7);
+var bytesToUuid = __webpack_require__(8);
 
 // **`v1()` - Generate time-based UUID**
 //
@@ -3130,14 +3671,14 @@ function v1(options, buf, offset) {
 module.exports = v1;
 
 /***/ }),
-/* 20 */
+/* 23 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var rng = __webpack_require__(5);
-var bytesToUuid = __webpack_require__(6);
+var rng = __webpack_require__(7);
+var bytesToUuid = __webpack_require__(8);
 
 function v4(options, buf, offset) {
   var i = buf && offset || 0;
@@ -3167,11 +3708,11 @@ function v4(options, buf, offset) {
 module.exports = v4;
 
 /***/ }),
-/* 21 */
+/* 24 */
 /***/ (function(module, exports, __webpack_require__) {
 
 
-var content = __webpack_require__(22);
+var content = __webpack_require__(25);
 
 if(typeof content === 'string') content = [[module.i, content, '']];
 
@@ -3185,22 +3726,22 @@ var options = {"hmr":true}
 options.transform = transform
 options.insertInto = undefined;
 
-var update = __webpack_require__(24)(content, options);
+var update = __webpack_require__(2)(content, options);
 
 if(content.locals) module.exports = content.locals;
 
 if(false) {}
 
 /***/ }),
-/* 22 */
+/* 25 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(23)(false);
+exports = module.exports = __webpack_require__(1)(false);
 // imports
 
 
 // module
-exports.push([module.i, "._1yWMblMhcoxIcFRQVWQUoB {\r\n    background-color: #F5F5F5;\r\n    color: #222;\r\n    display: flex;\r\n    flex-direction: column;\r\n    flex-wrap: nowrap;\r\n    justify-content: center;\r\n    align-items: center;\r\n    align-content: center;\r\n    width: 100vw;\r\n    height: 100vh;\r\n}", ""]);
+exports.push([module.i, "*{\r\n\tmargin:0;\r\n\tpadding:0;\r\n}\r\nbody{\r\n    font-family: 'Lato', sans-serif;\r\n    margin: 1%;\r\n\tbackground: #7f8c8d;\r\n\tdisplay: flex;\r\n\tjustify-content: center;\r\n\talign-items: center;\r\n}\r\n\r\n._1yWMblMhcoxIcFRQVWQUoB {\r\n\tbackground-color: #ecf0f1;\r\n\tflex: 0 0 auto;\r\n\tdisplay: flex;\r\n\tflex-direction: column;\r\n\tflex-wrap: nowrap;\r\n\tjustify-content: center;\r\n\talign-items: center;\r\n\twidth: 100wv;\r\n\theight: 100%;\r\n}", ""]);
 
 // exports
 exports.locals = {
@@ -3208,491 +3749,7 @@ exports.locals = {
 };
 
 /***/ }),
-/* 23 */
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-/*
-	MIT License http://www.opensource.org/licenses/mit-license.php
-	Author Tobias Koppers @sokra
-*/
-// css base code, injected by the css-loader
-module.exports = function (useSourceMap) {
-	var list = [];
-
-	// return the list of modules as css string
-	list.toString = function toString() {
-		return this.map(function (item) {
-			var content = cssWithMappingToString(item, useSourceMap);
-			if (item[2]) {
-				return "@media " + item[2] + "{" + content + "}";
-			} else {
-				return content;
-			}
-		}).join("");
-	};
-
-	// import a list of modules into the list
-	list.i = function (modules, mediaQuery) {
-		if (typeof modules === "string") modules = [[null, modules, ""]];
-		var alreadyImportedModules = {};
-		for (var i = 0; i < this.length; i++) {
-			var id = this[i][0];
-			if (typeof id === "number") alreadyImportedModules[id] = true;
-		}
-		for (i = 0; i < modules.length; i++) {
-			var item = modules[i];
-			// skip already imported module
-			// this implementation is not 100% perfect for weird media query combinations
-			//  when a module is imported multiple times with different media queries.
-			//  I hope this will never occur (Hey this way we have smaller bundles)
-			if (typeof item[0] !== "number" || !alreadyImportedModules[item[0]]) {
-				if (mediaQuery && !item[2]) {
-					item[2] = mediaQuery;
-				} else if (mediaQuery) {
-					item[2] = "(" + item[2] + ") and (" + mediaQuery + ")";
-				}
-				list.push(item);
-			}
-		}
-	};
-	return list;
-};
-
-function cssWithMappingToString(item, useSourceMap) {
-	var content = item[1] || '';
-	var cssMapping = item[3];
-	if (!cssMapping) {
-		return content;
-	}
-
-	if (useSourceMap && typeof btoa === 'function') {
-		var sourceMapping = toComment(cssMapping);
-		var sourceURLs = cssMapping.sources.map(function (source) {
-			return '/*# sourceURL=' + cssMapping.sourceRoot + source + ' */';
-		});
-
-		return [content].concat(sourceURLs).concat([sourceMapping]).join('\n');
-	}
-
-	return [content].join('\n');
-}
-
-// Adapted from convert-source-map (MIT)
-function toComment(sourceMap) {
-	// eslint-disable-next-line no-undef
-	var base64 = btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap))));
-	var data = 'sourceMappingURL=data:application/json;charset=utf-8;base64,' + base64;
-
-	return '/*# ' + data + ' */';
-}
-
-/***/ }),
-/* 24 */
-/***/ (function(module, exports, __webpack_require__) {
-
-/*
-	MIT License http://www.opensource.org/licenses/mit-license.php
-	Author Tobias Koppers @sokra
-*/
-
-var stylesInDom = {};
-
-var	memoize = function (fn) {
-	var memo;
-
-	return function () {
-		if (typeof memo === "undefined") memo = fn.apply(this, arguments);
-		return memo;
-	};
-};
-
-var isOldIE = memoize(function () {
-	// Test for IE <= 9 as proposed by Browserhacks
-	// @see http://browserhacks.com/#hack-e71d8692f65334173fee715c222cb805
-	// Tests for existence of standard globals is to allow style-loader
-	// to operate correctly into non-standard environments
-	// @see https://github.com/webpack-contrib/style-loader/issues/177
-	return window && document && document.all && !window.atob;
-});
-
-var getTarget = function (target, parent) {
-  if (parent){
-    return parent.querySelector(target);
-  }
-  return document.querySelector(target);
-};
-
-var getElement = (function (fn) {
-	var memo = {};
-
-	return function(target, parent) {
-                // If passing function in options, then use it for resolve "head" element.
-                // Useful for Shadow Root style i.e
-                // {
-                //   insertInto: function () { return document.querySelector("#foo").shadowRoot }
-                // }
-                if (typeof target === 'function') {
-                        return target();
-                }
-                if (typeof memo[target] === "undefined") {
-			var styleTarget = getTarget.call(this, target, parent);
-			// Special case to return head of iframe instead of iframe itself
-			if (window.HTMLIFrameElement && styleTarget instanceof window.HTMLIFrameElement) {
-				try {
-					// This will throw an exception if access to iframe is blocked
-					// due to cross-origin restrictions
-					styleTarget = styleTarget.contentDocument.head;
-				} catch(e) {
-					styleTarget = null;
-				}
-			}
-			memo[target] = styleTarget;
-		}
-		return memo[target]
-	};
-})();
-
-var singleton = null;
-var	singletonCounter = 0;
-var	stylesInsertedAtTop = [];
-
-var	fixUrls = __webpack_require__(25);
-
-module.exports = function(list, options) {
-	if (typeof DEBUG !== "undefined" && DEBUG) {
-		if (typeof document !== "object") throw new Error("The style-loader cannot be used in a non-browser environment");
-	}
-
-	options = options || {};
-
-	options.attrs = typeof options.attrs === "object" ? options.attrs : {};
-
-	// Force single-tag solution on IE6-9, which has a hard limit on the # of <style>
-	// tags it will allow on a page
-	if (!options.singleton && typeof options.singleton !== "boolean") options.singleton = isOldIE();
-
-	// By default, add <style> tags to the <head> element
-        if (!options.insertInto) options.insertInto = "head";
-
-	// By default, add <style> tags to the bottom of the target
-	if (!options.insertAt) options.insertAt = "bottom";
-
-	var styles = listToStyles(list, options);
-
-	addStylesToDom(styles, options);
-
-	return function update (newList) {
-		var mayRemove = [];
-
-		for (var i = 0; i < styles.length; i++) {
-			var item = styles[i];
-			var domStyle = stylesInDom[item.id];
-
-			domStyle.refs--;
-			mayRemove.push(domStyle);
-		}
-
-		if(newList) {
-			var newStyles = listToStyles(newList, options);
-			addStylesToDom(newStyles, options);
-		}
-
-		for (var i = 0; i < mayRemove.length; i++) {
-			var domStyle = mayRemove[i];
-
-			if(domStyle.refs === 0) {
-				for (var j = 0; j < domStyle.parts.length; j++) domStyle.parts[j]();
-
-				delete stylesInDom[domStyle.id];
-			}
-		}
-	};
-};
-
-function addStylesToDom (styles, options) {
-	for (var i = 0; i < styles.length; i++) {
-		var item = styles[i];
-		var domStyle = stylesInDom[item.id];
-
-		if(domStyle) {
-			domStyle.refs++;
-
-			for(var j = 0; j < domStyle.parts.length; j++) {
-				domStyle.parts[j](item.parts[j]);
-			}
-
-			for(; j < item.parts.length; j++) {
-				domStyle.parts.push(addStyle(item.parts[j], options));
-			}
-		} else {
-			var parts = [];
-
-			for(var j = 0; j < item.parts.length; j++) {
-				parts.push(addStyle(item.parts[j], options));
-			}
-
-			stylesInDom[item.id] = {id: item.id, refs: 1, parts: parts};
-		}
-	}
-}
-
-function listToStyles (list, options) {
-	var styles = [];
-	var newStyles = {};
-
-	for (var i = 0; i < list.length; i++) {
-		var item = list[i];
-		var id = options.base ? item[0] + options.base : item[0];
-		var css = item[1];
-		var media = item[2];
-		var sourceMap = item[3];
-		var part = {css: css, media: media, sourceMap: sourceMap};
-
-		if(!newStyles[id]) styles.push(newStyles[id] = {id: id, parts: [part]});
-		else newStyles[id].parts.push(part);
-	}
-
-	return styles;
-}
-
-function insertStyleElement (options, style) {
-	var target = getElement(options.insertInto)
-
-	if (!target) {
-		throw new Error("Couldn't find a style target. This probably means that the value for the 'insertInto' parameter is invalid.");
-	}
-
-	var lastStyleElementInsertedAtTop = stylesInsertedAtTop[stylesInsertedAtTop.length - 1];
-
-	if (options.insertAt === "top") {
-		if (!lastStyleElementInsertedAtTop) {
-			target.insertBefore(style, target.firstChild);
-		} else if (lastStyleElementInsertedAtTop.nextSibling) {
-			target.insertBefore(style, lastStyleElementInsertedAtTop.nextSibling);
-		} else {
-			target.appendChild(style);
-		}
-		stylesInsertedAtTop.push(style);
-	} else if (options.insertAt === "bottom") {
-		target.appendChild(style);
-	} else if (typeof options.insertAt === "object" && options.insertAt.before) {
-		var nextSibling = getElement(options.insertAt.before, target);
-		target.insertBefore(style, nextSibling);
-	} else {
-		throw new Error("[Style Loader]\n\n Invalid value for parameter 'insertAt' ('options.insertAt') found.\n Must be 'top', 'bottom', or Object.\n (https://github.com/webpack-contrib/style-loader#insertat)\n");
-	}
-}
-
-function removeStyleElement (style) {
-	if (style.parentNode === null) return false;
-	style.parentNode.removeChild(style);
-
-	var idx = stylesInsertedAtTop.indexOf(style);
-	if(idx >= 0) {
-		stylesInsertedAtTop.splice(idx, 1);
-	}
-}
-
-function createStyleElement (options) {
-	var style = document.createElement("style");
-
-	if(options.attrs.type === undefined) {
-		options.attrs.type = "text/css";
-	}
-
-	if(options.attrs.nonce === undefined) {
-		var nonce = getNonce();
-		if (nonce) {
-			options.attrs.nonce = nonce;
-		}
-	}
-
-	addAttrs(style, options.attrs);
-	insertStyleElement(options, style);
-
-	return style;
-}
-
-function createLinkElement (options) {
-	var link = document.createElement("link");
-
-	if(options.attrs.type === undefined) {
-		options.attrs.type = "text/css";
-	}
-	options.attrs.rel = "stylesheet";
-
-	addAttrs(link, options.attrs);
-	insertStyleElement(options, link);
-
-	return link;
-}
-
-function addAttrs (el, attrs) {
-	Object.keys(attrs).forEach(function (key) {
-		el.setAttribute(key, attrs[key]);
-	});
-}
-
-function getNonce() {
-	if (false) {}
-
-	return __webpack_require__.nc;
-}
-
-function addStyle (obj, options) {
-	var style, update, remove, result;
-
-	// If a transform function was defined, run it on the css
-	if (options.transform && obj.css) {
-	    result = options.transform(obj.css);
-
-	    if (result) {
-	    	// If transform returns a value, use that instead of the original css.
-	    	// This allows running runtime transformations on the css.
-	    	obj.css = result;
-	    } else {
-	    	// If the transform function returns a falsy value, don't add this css.
-	    	// This allows conditional loading of css
-	    	return function() {
-	    		// noop
-	    	};
-	    }
-	}
-
-	if (options.singleton) {
-		var styleIndex = singletonCounter++;
-
-		style = singleton || (singleton = createStyleElement(options));
-
-		update = applyToSingletonTag.bind(null, style, styleIndex, false);
-		remove = applyToSingletonTag.bind(null, style, styleIndex, true);
-
-	} else if (
-		obj.sourceMap &&
-		typeof URL === "function" &&
-		typeof URL.createObjectURL === "function" &&
-		typeof URL.revokeObjectURL === "function" &&
-		typeof Blob === "function" &&
-		typeof btoa === "function"
-	) {
-		style = createLinkElement(options);
-		update = updateLink.bind(null, style, options);
-		remove = function () {
-			removeStyleElement(style);
-
-			if(style.href) URL.revokeObjectURL(style.href);
-		};
-	} else {
-		style = createStyleElement(options);
-		update = applyToTag.bind(null, style);
-		remove = function () {
-			removeStyleElement(style);
-		};
-	}
-
-	update(obj);
-
-	return function updateStyle (newObj) {
-		if (newObj) {
-			if (
-				newObj.css === obj.css &&
-				newObj.media === obj.media &&
-				newObj.sourceMap === obj.sourceMap
-			) {
-				return;
-			}
-
-			update(obj = newObj);
-		} else {
-			remove();
-		}
-	};
-}
-
-var replaceText = (function () {
-	var textStore = [];
-
-	return function (index, replacement) {
-		textStore[index] = replacement;
-
-		return textStore.filter(Boolean).join('\n');
-	};
-})();
-
-function applyToSingletonTag (style, index, remove, obj) {
-	var css = remove ? "" : obj.css;
-
-	if (style.styleSheet) {
-		style.styleSheet.cssText = replaceText(index, css);
-	} else {
-		var cssNode = document.createTextNode(css);
-		var childNodes = style.childNodes;
-
-		if (childNodes[index]) style.removeChild(childNodes[index]);
-
-		if (childNodes.length) {
-			style.insertBefore(cssNode, childNodes[index]);
-		} else {
-			style.appendChild(cssNode);
-		}
-	}
-}
-
-function applyToTag (style, obj) {
-	var css = obj.css;
-	var media = obj.media;
-
-	if(media) {
-		style.setAttribute("media", media)
-	}
-
-	if(style.styleSheet) {
-		style.styleSheet.cssText = css;
-	} else {
-		while(style.firstChild) {
-			style.removeChild(style.firstChild);
-		}
-
-		style.appendChild(document.createTextNode(css));
-	}
-}
-
-function updateLink (link, options, obj) {
-	var css = obj.css;
-	var sourceMap = obj.sourceMap;
-
-	/*
-		If convertToAbsoluteUrls isn't defined, but sourcemaps are enabled
-		and there is no publicPath defined then lets turn convertToAbsoluteUrls
-		on by default.  Otherwise default to the convertToAbsoluteUrls option
-		directly
-	*/
-	var autoFixUrls = options.convertToAbsoluteUrls === undefined && sourceMap;
-
-	if (options.convertToAbsoluteUrls || autoFixUrls) {
-		css = fixUrls(css);
-	}
-
-	if (sourceMap) {
-		// http://stackoverflow.com/a/26603875
-		css += "\n/*# sourceMappingURL=data:application/json;base64," + btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap)))) + " */";
-	}
-
-	var blob = new Blob([css], { type: "text/css" });
-
-	var oldSrc = link.href;
-
-	link.href = URL.createObjectURL(blob);
-
-	if(oldSrc) URL.revokeObjectURL(oldSrc);
-}
-
-
-/***/ }),
-/* 25 */
+/* 26 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -3751,13 +3808,13 @@ module.exports = function (css) {
   \)  = Match a close parens
  	 /gi  = Get all matches, not the first.  Be case insensitive.
   */
-	var fixedCss = css.replace(/url\s*\(((?:[^)(]|\((?:[^)(]+|\([^)(]*\))*\))*)\)/gi, function (fullMatch, origUrl) {
+	var fixedCss = css.replace(/url\s*\(((?:[^)(]|\((?:[^)(]+|\([^)(]*\))*\))*)\)/gi, (function (fullMatch, origUrl) {
 		// strip quotes (if they exist)
-		var unquotedOrigUrl = origUrl.trim().replace(/^"(.*)"$/, function (o, $1) {
+		var unquotedOrigUrl = origUrl.trim().replace(/^"(.*)"$/, (function (o, $1) {
 			return $1;
-		}).replace(/^'(.*)'$/, function (o, $1) {
+		})).replace(/^'(.*)'$/, (function (o, $1) {
 			return $1;
-		});
+		}));
 
 		// already a full url? no change
 		if (/^(#|data:|http:\/\/|https:\/\/|file:\/\/\/|\s*$)/i.test(unquotedOrigUrl)) {
@@ -3780,14 +3837,14 @@ module.exports = function (css) {
 
 		// send back the fixed url(...)
 		return "url(" + JSON.stringify(newUrl) + ")";
-	});
+	}));
 
 	// send back the fixed css
 	return fixedCss;
 };
 
 /***/ }),
-/* 26 */
+/* 27 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -3801,12 +3858,16 @@ var _react = __webpack_require__(0);
 
 var _react2 = _interopRequireDefault(_react);
 
+var _Title = __webpack_require__(28);
+
+var _Title2 = _interopRequireDefault(_Title);
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 var Title = function Title(props) {
     return _react2.default.createElement(
         'div',
-        null,
+        { className: _Title2.default.Title },
         _react2.default.createElement(
             'h1',
             null,
@@ -3823,5 +3884,419 @@ var Title = function Title(props) {
 
 exports.default = Title;
 
-/***/ })
+/***/ }),
+/* 28 */
+/***/ (function(module, exports, __webpack_require__) {
+
+
+var content = __webpack_require__(29);
+
+if(typeof content === 'string') content = [[module.i, content, '']];
+
+var transform;
+var insertInto;
+
+
+
+var options = {"hmr":true}
+
+options.transform = transform
+options.insertInto = undefined;
+
+var update = __webpack_require__(2)(content, options);
+
+if(content.locals) module.exports = content.locals;
+
+if(false) {}
+
+/***/ }),
+/* 29 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(1)(false);
+// imports
+
+
+// module
+exports.push([module.i, ".DcXSjcjjaX9_NvqU207c- h1 {\r\n\tpadding: 20px 0;\r\n\ttext-align: center;\r\n\tfont-family: 'Lato', sans-serif;\r\n}\r\n\r\n.DcXSjcjjaX9_NvqU207c- p {\r\n\tfont-family: 'Lato', sans-serif;\r\n\tfont-weight: bold;\r\n \tpadding: 15px;\r\n}", ""]);
+
+// exports
+exports.locals = {
+	"Title": "DcXSjcjjaX9_NvqU207c-"
+};
+
+/***/ }),
+/* 30 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _react = __webpack_require__(0);
+
+var _react2 = _interopRequireDefault(_react);
+
+var _Todo = __webpack_require__(31);
+
+var _Todo2 = _interopRequireDefault(_Todo);
+
+var _TodoList = __webpack_require__(34);
+
+var _TodoList2 = _interopRequireDefault(_TodoList);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var TodoList = (function (_React$Component) {
+    _inherits(TodoList, _React$Component);
+
+    function TodoList(props) {
+        _classCallCheck(this, TodoList);
+
+        return _possibleConstructorReturn(this, (TodoList.__proto__ || Object.getPrototypeOf(TodoList)).call(this, props));
+    }
+
+    _createClass(TodoList, [{
+        key: 'render',
+        value: function render() {
+            var _this2 = this;
+
+            return _react2.default.createElement(
+                'ul',
+                { className: _TodoList2.default.TodoList },
+                this.props.data.map((function (todo) {
+                    return _react2.default.createElement(_Todo2.default, { key: todo.id, todo: todo, remove: _this2.props.remove });
+                }))
+            );
+        }
+    }]);
+
+    return TodoList;
+})(_react2.default.Component);
+
+exports.default = TodoList;
+
+/***/ }),
+/* 31 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+	value: true
+});
+
+var _react = __webpack_require__(0);
+
+var _react2 = _interopRequireDefault(_react);
+
+var _Todo = __webpack_require__(32);
+
+var _Todo2 = _interopRequireDefault(_Todo);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var Todo = function Todo(props) {
+	return _react2.default.createElement(
+		'li',
+		{ className: _Todo2.default.Todo },
+		_react2.default.createElement(
+			'a',
+			{ href: '#' },
+			_react2.default.createElement(
+				'p',
+				null,
+				props.todo.text
+			),
+			_react2.default.createElement(
+				'button',
+				{ onClick: function onClick() {
+						return props.remove(props.todo.id);
+					} },
+				'X'
+			)
+		)
+	);
+};
+
+exports.default = Todo;
+
+/***/ }),
+/* 32 */
+/***/ (function(module, exports, __webpack_require__) {
+
+
+var content = __webpack_require__(33);
+
+if(typeof content === 'string') content = [[module.i, content, '']];
+
+var transform;
+var insertInto;
+
+
+
+var options = {"hmr":true}
+
+options.transform = transform
+options.insertInto = undefined;
+
+var update = __webpack_require__(2)(content, options);
+
+if(content.locals) module.exports = content.locals;
+
+if(false) {}
+
+/***/ }),
+/* 33 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(1)(false);
+// imports
+
+
+// module
+exports.push([module.i, ".CjEa3LL-E1IE8PbssGv4u {\r\n\tlist-style:none;\r\n\tmargin:1em;\r\n}\r\n\r\n .CjEa3LL-E1IE8PbssGv4u a{\r\n\tdisplay: flex;\r\n\tjustify-content: space-between;\r\n\talign-items: start;\r\n\tfont-weight: bold;\r\n\ttext-decoration:none;\r\n\tcolor:#000;\r\n\tbackground:#f1c40f;\r\n\theight:10em;\r\n\twidth:10em;\r\n\tpadding:1em;\r\n}\r\n\r\n.CjEa3LL-E1IE8PbssGv4u a button {\r\n\theight: 20px;\r\n\twidth: 20px;\r\n\tborder-radius: 100%;\r\n\tborder-width: 0;\r\n\tborder-style: none;\r\n\tborder-image: initial;\r\n\tcursor: pointer;\r\n}\r\n\r\n", ""]);
+
+// exports
+exports.locals = {
+	"Todo": "CjEa3LL-E1IE8PbssGv4u"
+};
+
+/***/ }),
+/* 34 */
+/***/ (function(module, exports, __webpack_require__) {
+
+
+var content = __webpack_require__(35);
+
+if(typeof content === 'string') content = [[module.i, content, '']];
+
+var transform;
+var insertInto;
+
+
+
+var options = {"hmr":true}
+
+options.transform = transform
+options.insertInto = undefined;
+
+var update = __webpack_require__(2)(content, options);
+
+if(content.locals) module.exports = content.locals;
+
+if(false) {}
+
+/***/ }),
+/* 35 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(1)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\r\n._746Le9XnRlHRT9rCtI51J {\r\n\tlist-style:none;\r\n\tpadding:3em;\r\n\tdisplay: flex;\r\n\tflex-wrap: wrap;\r\n\tjustify-content: center;\r\n}", ""]);
+
+// exports
+exports.locals = {
+	"TodoList": "_746Le9XnRlHRT9rCtI51J"
+};
+
+/***/ }),
+/* 36 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _react = __webpack_require__(0);
+
+var _react2 = _interopRequireDefault(_react);
+
+var _TodoForm = __webpack_require__(37);
+
+var _TodoForm2 = _interopRequireDefault(_TodoForm);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var FormToDo = function FormToDo(props) {
+    return _react2.default.createElement(
+        'form',
+        { onSubmit: props.onSubmit, className: _TodoForm2.default.TodoForm },
+        _react2.default.createElement(
+            'label',
+            { htmlFor: 'text' },
+            'Add task'
+        ),
+        _react2.default.createElement('input', {
+            onChange: props.onChange,
+            id: 'text',
+            value: props.input
+        }),
+        _react2.default.createElement(
+            'button',
+            { type: 'submit', value: 'submit' },
+            'Add'
+        )
+    );
+};
+
+var TodoForm = (function (_React$Component) {
+    _inherits(TodoForm, _React$Component);
+
+    function TodoForm(props) {
+        _classCallCheck(this, TodoForm);
+
+        var _this = _possibleConstructorReturn(this, (TodoForm.__proto__ || Object.getPrototypeOf(TodoForm)).call(this, props));
+
+        _this.state = {
+            input: ''
+        };
+        return _this;
+    }
+
+    _createClass(TodoForm, [{
+        key: 'handleChange',
+        value: function handleChange(e) {
+            var valueTodo = e.target.value;
+            this.setState({ input: valueTodo });
+        }
+    }, {
+        key: 'handleSubmit',
+        value: function handleSubmit(e) {
+            e.preventDefault();
+            var value = this.state.input;
+            this.props.addTodo(value);
+        }
+    }, {
+        key: 'render',
+        value: function render() {
+            return _react2.default.createElement(FormToDo, { onChange: this.handleChange.bind(this), onSubmit: this.handleSubmit.bind(this), input: this.state.input });
+        }
+    }]);
+
+    return TodoForm;
+})(_react2.default.Component);
+
+exports.default = TodoForm;
+
+/***/ }),
+/* 37 */
+/***/ (function(module, exports, __webpack_require__) {
+
+
+var content = __webpack_require__(38);
+
+if(typeof content === 'string') content = [[module.i, content, '']];
+
+var transform;
+var insertInto;
+
+
+
+var options = {"hmr":true}
+
+options.transform = transform
+options.insertInto = undefined;
+
+var update = __webpack_require__(2)(content, options);
+
+if(content.locals) module.exports = content.locals;
+
+if(false) {}
+
+/***/ }),
+/* 38 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(1)(false);
+// imports
+
+
+// module
+exports.push([module.i, "._1cQpYun-lC84resfJ6MnZA {\r\n\tdisplay: flex;\r\n\tjustify-content: center;\r\n\talign-items: center;\r\n\tbox-sizing: border-box;\r\n\ttext-align: center;\r\n\tflex-wrap: wrap;\r\n}\r\n\r\n._1cQpYun-lC84resfJ6MnZA label, ._1cQpYun-lC84resfJ6MnZA input {\r\n\tmargin: 15px;\r\n\twidth: 200px;\r\n\theight: 30px;\r\n\tline-height: 30px;\r\n\tborder: none;\r\n\tborder-radius: 4px;\r\n}\r\n\r\n._1cQpYun-lC84resfJ6MnZA button {\r\n\tmargin: 15px;\r\n\twidth: 100px;\r\n\theight: 30px;\r\n\tborder: none;\r\n\tcursor: pointer;\r\n\tborder-radius: 4px;\r\n}", ""]);
+
+// exports
+exports.locals = {
+	"TodoForm": "_1cQpYun-lC84resfJ6MnZA"
+};
+
+/***/ }),
+/* 39 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+if (true) {
+  module.exports = __webpack_require__(40);
+} else {}
+
+/***/ }),
+/* 40 */
+/***/ ((function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
+
+function _interopDefault(t) {
+  return t && "object" == (typeof t === "undefined" ? "undefined" : _typeof(t)) && "default" in t ? t.default : t;
+}Object.defineProperty(exports, "__esModule", { value: !0 });var React = _interopDefault(__webpack_require__(0)),
+    classCallCheck = function classCallCheck(t, e) {
+  if (!(t instanceof e)) throw new TypeError("Cannot call a class as a function");
+},
+    inherits = function inherits(t, e) {
+  if ("function" != typeof e && null !== e) throw new TypeError("Super expression must either be null or a function, not " + (typeof e === "undefined" ? "undefined" : _typeof(e)));t.prototype = Object.create(e && e.prototype, { constructor: { value: t, enumerable: !1, writable: !0, configurable: !0 } }), e && (Object.setPrototypeOf ? Object.setPrototypeOf(t, e) : t.__proto__ = e);
+},
+    possibleConstructorReturn = function possibleConstructorReturn(t, e) {
+  if (!t) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");return !e || "object" != (typeof e === "undefined" ? "undefined" : _typeof(e)) && "function" != typeof e ? t : e;
+},
+    AppContainer = (function (t) {
+  function e() {
+    return classCallCheck(this, e), possibleConstructorReturn(this, t.apply(this, arguments));
+  }return inherits(e, t), e.prototype.render = function () {
+    return React.Children.only(this.props.children);
+  }, e;
+})(React.Component),
+    hot_prod = function hot_prod() {
+  return function (t) {
+    return t;
+  };
+},
+    areComponentsEqual = function areComponentsEqual(t, e) {
+  return t === e;
+},
+    setConfig = function setConfig() {},
+    cold = function cold(t) {
+  return t;
+};exports.AppContainer = AppContainer, exports.hot = hot_prod, exports.areComponentsEqual = areComponentsEqual, exports.setConfig = setConfig, exports.cold = cold;
+
+/***/ }))
 /******/ ]);
